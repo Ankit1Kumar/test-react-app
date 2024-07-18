@@ -1,0 +1,63 @@
+name: Upload build_artifact_push
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**'
+      - '!.github/workflows/**'
+      - '.github/workflows/build-artifact-zip-push.yaml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: infra-devops
+    strategy:
+      matrix:
+        node-version: [18.9]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - name: Make envfile
+        uses: SpicyPizza/create-envfile@v1.3
+        with:
+          envkey_REACT_APP_BASE_URL: https://temporary-value-url/api/
+          envkey_REACT_APP_AUTH_0_DOMAIN: temporary-value-domain.us.auth0.com
+          envkey_REACT_APP_AUTH_0_CLIENT_ID: temporary-client-id
+          envkey_REACT_APP_AUTH0_CALLBACK_URL: https://temporary-value-url/callback
+          envkey_REACT_APP_AUTH0_AUDIENCE: https://dev.api.identityscience.ai
+          envkey_REACT_APP_DOMAIN: https://temporary-value-app-domain
+          envkey_REACT_APP_URL: https://temporary-keycloak-domain
+          envkey_REACT_APP_REALM: temporary-app-realm
+          envkey_REACT_APP_CLIENT_ID: temporary-app-client-id
+          file_name: .env.temp
+          fail_on_empty: false
+      - name: NPM Install
+        run: npm install
+      - name: NPM Build
+        run: |
+          export $(xargs < .env.temp)
+          npm run build --if-present
+        env:
+          INLINE_RUNTIME_CHUNK: false
+          IMAGE_INLINE_SIZE_LIMIT: 0          
+      - name: Zip build directory
+        run: zip -r build.zip ./build
+      - name: Set branch name 
+        run: |
+          echo "BRANCH_NAME=$(echo "${{ github.ref }}" | sed 's#refs/heads/##')" >> $GITHUB_ENV
+      - name: Configure AWS Credentials for use
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: $${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: $${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Upload Artifact to S3
+        run: |
+          aws s3 cp build.zip s3://test-ui-v2-artifact-bucket/build-artifact-${{ env.BRANCH_NAME }}.zip
